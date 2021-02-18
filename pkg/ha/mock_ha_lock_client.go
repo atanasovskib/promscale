@@ -7,20 +7,20 @@ package ha
 import (
 	"context"
 	"fmt"
+	"github.com/timescale/promscale/pkg/ha/client"
 	"time"
 
 	"github.com/jackc/pgconn"
-	"github.com/timescale/promscale/pkg/ha/state"
 )
 
 type mockLockClient struct {
-	leadersPerCluster map[string]*state.HALockState
+	leadersPerCluster map[string]*client.LeaseDBState
 }
 
-func (m *mockLockClient) updateLease(_ context.Context, cluster, leader string, minTime, maxTime time.Time) (*state.HALockState, error) {
+func (m *mockLockClient) UpdateLease(_ context.Context, cluster, leader string, minTime, maxTime time.Time) (*client.LeaseDBState, error) {
 	lock, exists := m.leadersPerCluster[cluster]
 	if !exists {
-		lock = &state.HALockState{
+		lock = &client.LeaseDBState{
 			Cluster:    cluster,
 			Leader:     leader,
 			LeaseStart: minTime,
@@ -38,12 +38,12 @@ func (m *mockLockClient) updateLease(_ context.Context, cluster, leader string, 
 	return lock, nil
 }
 
-func (m *mockLockClient) tryChangeLeader(_ context.Context, cluster, newLeader string, maxTime time.Time) (*state.HALockState, error) {
+func (m *mockLockClient) TryChangeLeader(_ context.Context, cluster, newLeader string, maxTime time.Time) (*client.LeaseDBState, error) {
 	lock, exists := m.leadersPerCluster[cluster]
 	if !exists {
-		return nil, fmt.Errorf("no leader for %s, updateLease never called before tryChangeLeader", cluster)
+		return nil, fmt.Errorf("no leader for %s, UpdateLease never called before TryChangeLeader", cluster)
 	}
-	lock = &state.HALockState{
+	lock = &client.LeaseDBState{
 		Cluster:    cluster,
 		Leader:     newLeader,
 		LeaseStart: lock.LeaseUntil,
@@ -54,16 +54,16 @@ func (m *mockLockClient) tryChangeLeader(_ context.Context, cluster, newLeader s
 }
 
 func newMockLockClient() *mockLockClient {
-	return &mockLockClient{leadersPerCluster: make(map[string]*state.HALockState)}
+	return &mockLockClient{leadersPerCluster: make(map[string]*client.LeaseDBState)}
 }
 
-func (m *mockLockClient) readLeaseSettings(ctx context.Context) (timeout, refresh time.Duration, err error) {
+func (m *mockLockClient) ReadLeaseSettings(ctx context.Context) (timeout, refresh time.Duration, err error) {
 	return time.Minute * 1, time.Second * 10, nil
 }
 
 var count int
 
-func (m *mockLockClient) readLockState(ctx context.Context, cluster string) (*state.HALockState, error) {
+func (m *mockLockClient) ReadLeaseState(ctx context.Context, cluster string) (*client.LeaseDBState, error) {
 	count++
 
 	// the below cases are added to simulate the scenario's the leader has updated by another

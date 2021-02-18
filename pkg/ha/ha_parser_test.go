@@ -6,6 +6,7 @@ package ha
 
 import (
 	"fmt"
+	"github.com/timescale/promscale/pkg/ha/client"
 	"reflect"
 	"testing"
 	"time"
@@ -31,7 +32,7 @@ func Test_haParser_ParseData(t *testing.T) {
 	inLeaseTimestamp := leaseStart.Add(time.Second).UnixNano() / 1000000
 	behindLeaseTimestamp := leaseStart.Add(-time.Second).UnixNano() / 1000000
 	aheadLeaseTimestamp := leaseUntil.Add(time.Second).UnixNano() / 1000000
-	clusterInfo := []*state.HALockState{
+	clusterInfo := []*client.LeaseDBState{
 		{
 			Cluster:    "cluster1",
 			Leader:     "replica1",
@@ -302,7 +303,7 @@ func Test_haParser_ParseData(t *testing.T) {
 			cluster:     "cluster3",
 		},
 		{
-			name:   "Test: HA enabled, parse samples from standby instance. readLockState returns the updated leader as standby prom instance.",
+			name:   "Test: HA enabled, parse samples from standby instance. ReadLeaseState returns the updated leader as standby prom instance.",
 			fields: fields{service: mockService},
 			args: args{tts: []prompb.TimeSeries{
 				{
@@ -340,7 +341,7 @@ func Test_haParser_ParseData(t *testing.T) {
 			cluster:     "cluster4",
 		},
 		{
-			name:   "Test: HA enabled parse from standby. readLockState returns the updated leader as standby prom instance but samples aren't part lease range.",
+			name:   "Test: HA enabled parse from standby. ReadLeaseState returns the updated leader as standby prom instance but samples aren't part lease range.",
 			fields: fields{service: mockService},
 			args: args{tts: []prompb.TimeSeries{
 				{
@@ -387,7 +388,7 @@ func Test_haParser_ParseData(t *testing.T) {
 						f := tt.wantSamples["test"]
 						if f != nil {
 							s, _ := h.service.state.Load(tt.cluster)
-							state := s.(*state.State)
+							state := s.(*state.Lease)
 							stateView := state.Clone()
 							if obj.Value != stateView.Leader || f[0].Samples[0].Timestamp != stateView.MaxTimeSeen.UnixNano()/1000000 {
 								t.Errorf("max time seen isn't updated to latest samples info")
