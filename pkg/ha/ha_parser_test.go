@@ -152,7 +152,6 @@ func Test_haParser_ParseData(t *testing.T) {
 							Names:      []string{model.ClusterNameLabel, model.MetricNameLabelName},
 							Values:     []string{"cluster1", "test"},
 							MetricName: "test",
-							Str:        "\v\u0000__cluster__\b\u0000cluster1\b\u0000__name__\u0004\u0000test",
 						},
 						SeriesID: -1,
 						Samples: []prompb.Sample{
@@ -210,7 +209,6 @@ func Test_haParser_ParseData(t *testing.T) {
 							Names:      []string{model.ClusterNameLabel, model.MetricNameLabelName},
 							Values:     []string{"cluster3", "test"},
 							MetricName: "test",
-							Str:        "\v\u0000__cluster__\b\u0000cluster3\b\u0000__name__\u0004\u0000test",
 						},
 						SeriesID: -1,
 						Samples: []prompb.Sample{
@@ -226,7 +224,7 @@ func Test_haParser_ParseData(t *testing.T) {
 			cluster:     "cluster3",
 		},
 		{
-			name:   "Test: HA enabled parse from leader & samples are in interval [leaseStart-X, leaseUntil]",
+			name:   "Test: HA enabled parse from leader & samples are in interval [leaseStart-X, leaseUntil)",
 			fields: fields{service: mockService},
 			args: args{tts: []prompb.TimeSeries{
 				{
@@ -249,7 +247,6 @@ func Test_haParser_ParseData(t *testing.T) {
 							Names:      []string{model.ClusterNameLabel, model.MetricNameLabelName},
 							Values:     []string{"cluster3", "test"},
 							MetricName: "test",
-							Str:        "\v\u0000__cluster__\b\u0000cluster3\b\u0000__name__\u0004\u0000test",
 						},
 						SeriesID: -1,
 						Samples: []prompb.Sample{
@@ -287,7 +284,6 @@ func Test_haParser_ParseData(t *testing.T) {
 							Names:      []string{model.ClusterNameLabel, model.MetricNameLabelName},
 							Values:     []string{"cluster3", "test"},
 							MetricName: "test",
-							Str:        "\v\u0000__cluster__\b\u0000cluster3\b\u0000__name__\u0004\u0000test",
 						},
 						SeriesID: -1,
 						Samples: []prompb.Sample{
@@ -325,7 +321,6 @@ func Test_haParser_ParseData(t *testing.T) {
 							Names:      []string{model.ClusterNameLabel, model.MetricNameLabelName},
 							Values:     []string{"cluster4", "test"},
 							MetricName: "test",
-							Str:        "\v\u0000__cluster__\b\u0000cluster4\b\u0000__name__\u0004\u0000test",
 						},
 						SeriesID: -1,
 						Samples: []prompb.Sample{
@@ -371,9 +366,12 @@ func Test_haParser_ParseData(t *testing.T) {
 				t.Errorf("ParseData() error = %v, wantErr %v", err, tt.wantErr)
 				return
 			}
-			if !reflect.DeepEqual(gotSamplesPerMetric, tt.wantSamples) {
-				t.Errorf("ParseData() gotSamplesPerMetric = %v, wantSamples %v", gotSamplesPerMetric, tt.wantSamples)
+
+			if errStr := compareSamples(tt.wantSamples, gotSamplesPerMetric); errStr != "" {
+				t.Fatal(errStr)
+				return
 			}
+
 			if gotTotalRows != tt.wantNumRows {
 				t.Errorf("ParseData() gotTotalRows = %v, wantSamples %v", gotTotalRows, tt.wantNumRows)
 			}
@@ -388,9 +386,9 @@ func Test_haParser_ParseData(t *testing.T) {
 						f := tt.wantSamples["test"]
 						if f != nil {
 							s, _ := h.service.state.Load(tt.cluster)
-							state := s.(*state.Lease)
-							stateView := state.Clone()
-							if obj.Value != stateView.Leader || f[0].Samples[0].Timestamp != stateView.MaxTimeSeen.UnixNano()/1000000 {
+							lease := s.(*state.Lease)
+							leaseView := lease.Clone()
+							if obj.Value != leaseView.Leader || f[0].Samples[0].Timestamp != leaseView.MaxTimeSeen.UnixNano()/1000000 {
 								t.Errorf("max time seen isn't updated to latest samples info")
 							}
 						}
@@ -399,6 +397,46 @@ func Test_haParser_ParseData(t *testing.T) {
 			}
 		})
 	}
+}
+
+func compareSamples(wantedResponse, receivedResponse map[string][]model.SamplesInfo) string {
+	if wantedResponse == nil && receivedResponse != nil {
+		return fmt.Sprintf("want nil samples, got: %v ", receivedResponse)
+	} else if wantedResponse != nil && receivedResponse == nil {
+		return fmt.Sprintf("got nil samples; want: %v", wantedResponse)
+	} else if wantedResponse == nil {
+		return ""
+	}
+
+	for metric, wantedSamplesInfos := range wantedResponse {
+		receivedSamplesInfos, ok := receivedResponse[metric]
+		if !ok {
+			return fmt.Sprintf("wanted sample infos for metric [%s] weren't present", metric)
+		}
+		if len(wantedSamplesInfos) != len(receivedSamplesInfos) {
+			return fmt.Sprintf("wanted [%d] sample infos for metric [%s]; got [%d]",
+				len(wantedSamplesInfos), metric, len(receivedSamplesInfos),
+			)
+		}
+		for i, wantedSamplesInfo := range wantedSamplesInfos {
+			receivedSamplesInfo := receivedSamplesInfos[i]
+			if !reflect.DeepEqual(wantedSamplesInfo.Samples, receivedSamplesInfo.Samples) {
+				return fmt.Sprintf("samples for metric [%s] are not equal\nwant: %v\ngot: %v",
+					metric, wantedSamplesInfo.Samples, receivedSamplesInfo.Samples)
+			}
+			if !compareLabels(wantedSamplesInfo.Labels, receivedSamplesInfo.Labels) {
+				return fmt.Sprintf("labels for metric [%s] are not equal\nwant: %v\ngot: %v",
+					metric, wantedSamplesInfo.Labels, receivedSamplesInfo.Labels)
+			}
+		}
+	}
+	return ""
+}
+
+func compareLabels(wantedLabels, gottenLabels *model.Labels) bool {
+	return wantedLabels.MetricName == gottenLabels.MetricName &&
+		reflect.DeepEqual(wantedLabels.Names, gottenLabels.Names) &&
+		reflect.DeepEqual(wantedLabels.Values, gottenLabels.Values)
 }
 
 func TestFilterSamples(t *testing.T) {

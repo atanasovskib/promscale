@@ -32,8 +32,6 @@ const (
 type Service struct {
 	state               *sync.Map
 	leaseClient         client.LeaseClient
-	leaseTimeout        time.Duration
-	leaseRefresh        time.Duration
 	leaderChangeLocks   *sync.Map
 	syncTicker          util.Ticker
 	currentTimeProvider func() time.Time
@@ -43,7 +41,7 @@ type Service struct {
 // database connection and the default sync interval.
 // The sync interval determines how often the leases for
 // all clusters are refreshed from the database.
-func NewHAService(dbClient pgxconn.PgxConn) (*Service, error) {
+func NewHAService(dbClient pgxconn.PgxConn) *Service {
 	return NewHAServiceWith(dbClient, util.NewTicker(haSyncerTimeInterval), time.Now)
 }
 
@@ -52,24 +50,18 @@ func NewHAService(dbClient pgxconn.PgxConn) (*Service, error) {
 // The ticker determines when the lease states for all clusters
 // are refreshed from the database, the currentTimeFn determines the
 // current time, used for deterministic tests.
-func NewHAServiceWith(dbClient pgxconn.PgxConn, ticker util.Ticker, currentTimeFn func() time.Time) (*Service, error) {
+func NewHAServiceWith(dbClient pgxconn.PgxConn, ticker util.Ticker, currentTimeFn func() time.Time) *Service {
 	lockClient := client.NewHaLockClient(dbClient)
-	timeout, refresh, err := lockClient.ReadLeaseSettings(context.Background())
-	if err != nil {
-		return nil, fmt.Errorf("could not create HA state: %#v", err)
-	}
 
 	service := &Service{
 		state:               &sync.Map{},
 		leaseClient:         lockClient,
-		leaseTimeout:        timeout,
-		leaseRefresh:        refresh,
 		leaderChangeLocks:   &sync.Map{},
 		syncTicker:          ticker,
 		currentTimeProvider: currentTimeFn,
 	}
 	go service.haStateSyncer()
-	return service, nil
+	return service
 }
 
 // haStateSyncer periodically synchronizes the in-memory
@@ -178,7 +170,11 @@ func (s *Service) tryChangeLeader(cluster string, currentLease *state.Lease) {
 			return
 		}
 
-		currentLease.SetUpdateFromDB(leaseState)
+		err = currentLease.SetUpdateFromDB(leaseState)
+		if err != nil {
+			log.Error("msg", "Couldn't set update from db to lease", "err", err)
+			return
+		}
 		if leaseState.Leader != stateView.Leader {
 			// leader changed
 			exposeHAStateToMetrics(cluster, stateView.Leader, leaseState.Leader)
